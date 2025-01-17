@@ -7,13 +7,18 @@
 
 # 2. Import Necessary Libraries
 import json
+import os
 import numpy as np
 from sentence_transformers import SentenceTransformer, models
+from langchain_openai import OpenAIEmbeddings
 
 # 3. Load Your Codebase
 # Replace 'codebase.json' with the path to your codebase JSON file
 with open('/home/dheena/Downloads/Intiliee/output/output_code_data.json', 'r') as f:
     codebase = json.load(f)
+
+if not os.environ.get("OPENAI_API_KEY"):
+  os.environ["OPENAI_API_KEY"] = ("Enter API key for OpenAI: ")
 
 # Extract code snippets and metadata
 code_snippets = []
@@ -35,34 +40,25 @@ for file in codebase:
 
 print(f"Total code snippets loaded: {len(code_snippets)}")
 
-# 4. Load the Embedding Model
-# We will use CodeBERT via the sentence-transformers library
-# Load the transformer model
-word_embedding_model = models.Transformer('microsoft/codebert-base', max_seq_length=512)
-# Add a pooling layer
-pooling_model = models.Pooling(
-    word_embedding_model.get_word_embedding_dimension(),
-    pooling_mode_mean_tokens=True,
-    pooling_mode_cls_token=False,
-    pooling_mode_max_tokens=False
-)
+# # 4. Load the Embedding Model
+# # Load the code search model
 
-# Create the SentenceTransformer model
-model = SentenceTransformer(modules=[word_embedding_model, pooling_model])
+# embeddings = OpenAIEmbeddings(model="text-embedding-3-large")
 
-# 5. Generate Embeddings for the Code Snippets
-print("Generating embeddings for code snippets...")
-embeddings = model.encode(code_snippets, show_progress_bar=True)
+# # Generate embeddings
+# print("Generating embeddings for code snippets...")
+# code_snippets_str = [snippet if isinstance(snippet, str) else snippet.get("code", "") for snippet in code_snippets]
+# vectors = embeddings.embed_documents(code_snippets_str)
 
-# 6. Save the Embeddings and Data
-# Save embeddings to a .npy file
-np.save('/home/dheena/Downloads/Intiliee/output/embeddings.npy', embeddings)
+# # 6. Save the Embeddings and Data
+# # Save embeddings to a .npy file
+# np.save('/home/dheena/Downloads/Intiliee/output/embeddings.npy', vectors)
 
-# Save code snippets and metadata as JSON files
+# # Save code snippets and metadata as JSON files
 with open('/home/dheena/Downloads/Intiliee/output/code_snippets.json', 'w') as f:
     json.dump(code_snippets, f)
 
-with open('/home/dheena/Downloads/Intiliee/output/metadata.json', 'w') as f:
-    json.dump(metadata, f)
+# with open('/home/dheena/Downloads/Intiliee/output/metadata.json', 'w') as f:
+#     json.dump(metadata, f)
 
-print("Embeddings and data have been saved successfully.")
+# print("Embeddings and data have been saved successfully.")

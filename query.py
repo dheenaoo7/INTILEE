@@ -1,8 +1,12 @@
 import faiss
 import json
 import numpy as np
+from gradio_client import Client
 import torch
 from sentence_transformers import SentenceTransformer, models
+from ollama import chat
+from flask import Flask, request, jsonify
+import ast, json
 
 # Paths to your saved files
 FAISS_INDEX_PATH = '/home/dheena/Downloads/Intiliee/output/code_embeddings.index'
@@ -28,19 +32,12 @@ with open(METADATA_PATH, 'r') as f:
     metadata = json.load(f)
 print(f"Loaded metadata for {len(metadata)} code snippets.")
 
-# Load the tokenizer and model
-# We will use CodeBERT via the sentence-transformers library
-# Load the transformer model and pooling
-word_embedding_model = models.Transformer('microsoft/codebert-base', max_seq_length=512)
-pooling_model = models.Pooling(
-    word_embedding_model.get_word_embedding_dimension(),
-    pooling_mode_mean_tokens=True,
-    pooling_mode_cls_token=False,
-    pooling_mode_max_tokens=False
-)
+model = SentenceTransformer("krlvi/sentence-t5-base-nlpl-code-x-glue")
 
-# Create the SentenceTransformer model
-model = SentenceTransformer(modules=[word_embedding_model, pooling_model])
+
+def get_query_embedding(query_text):
+    embedding = model.encode([query_text])
+    return embedding
 
 print("Model loaded successfully.")
 
@@ -53,31 +50,19 @@ def get_query_embedding(query_text):
 
 def search_code_snippets(user_query, index, code_snippets, metadata, top_k=5):
     query_embedding = get_query_embedding(user_query)
+    query_embedding = query_embedding / np.linalg.norm(query_embedding, axis=1, keepdims=True)
+    query_embedding = query_embedding.astype('float32')
+
     distances, indices = index.search(query_embedding, k=top_k)
+
     results = []
-    for idx in indices[0]:
+    for idx, distance in zip(indices[0], distances[0]):
         snippet = code_snippets[idx]
         info = metadata[idx]
-        distance = distances[0][np.where(indices[0] == idx)[0][0]]
+        similarity = float(distance)
         results.append({
             'snippet': snippet,
             'metadata': info,
-            'distance': distance
+            'similarity': similarity
         })
     return results
-
-# Sample user query
-user_query = "What is the purpose of the deletePauseOption method?"
-
-# Search for similar code snippets
-results = search_code_snippets(user_query, index, code_snippets, metadata, top_k=5)
-
-# Display the results
-print("\nTop matching code snippets:")
-for i, result in enumerate(results):
-    print(f"\nResult {i+1}:")
-    print(f"File: {result['metadata']['file_name']}")
-    print(f"Type: {result['metadata']['type']}")
-    print(f"Distance (cosine similarity): {result['distance']}")
-    print("Code Snippet:")
-    print(result['snippet'])

@@ -18,7 +18,6 @@ def parse_file(file_path):
     try:
         with open(file_path, 'r') as file:
             code = file.read()
-
         # Parsing the code using the Tree-Sitter parser
         tree = parser.parse(bytes(code, 'utf8'))
         root_node = tree.root_node

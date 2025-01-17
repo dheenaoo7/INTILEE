@@ -17,23 +17,18 @@ print(f"Embeddings shape: {embeddings.shape}")
 print(f"Number of code snippets: {len(code_snippets)}")
 print(f"Number of metadata entries: {len(metadata)}")
 
-# Normalize the embeddings
+# Normalize embeddings
 embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
 
+# Convert embeddings to float32
+embeddings = embeddings.astype('float32')
+
+# Create a FAISS index for cosine similarity
 embedding_dimension = embeddings.shape[1]
-print(f"Embedding dimension: {embedding_dimension}")
-
-# Create the index
-index = faiss.IndexFlatIP(embedding_dimension)
-
-# Convert embeddings to float32 if they are not already
-if embeddings.dtype != 'float32':
-    embeddings = embeddings.astype('float32')
+index = faiss.IndexFlatIP(embedding_dimension)  # Inner product
 
 # Add embeddings to the index
 index.add(embeddings)
-
-print(f"Number of vectors in the index: {index.ntotal}")
 
 faiss.write_index(index, '/home/dheena/Downloads/Intiliee/output/code_embeddings.index')
 print("Index saved successfully.")
