@@ -55,7 +55,7 @@ def extract_unique_methods_from_ast(file_path):
                 param_type = param.type
                 param_types.append(str(param_type))  
             unique_methods.append(Methods(current_class_name, method_name, tuple(param_types)))
-    save_methods_to_json(unique_methods, '/home/dheena/Downloads/Intiliee/output/unique_methods.json')
+            
 def parse_java_file(file_path):
     """Parse a single Java file and extract function details."""
     with open(file_path, 'r') as file:
@@ -65,10 +65,17 @@ def parse_java_file(file_path):
     tree = javalang.parse.parse(code)
 
     functions_data = []
-    for _, node in tree.filter(javalang.tree.MethodDeclaration):
+    current_class_name = ""
+    for _, node in tree:
+        if isinstance(node, javalang.tree.ClassDeclaration):
+            current_class_name = node.name
+            continue
+        if not isinstance(node, javalang.tree.MethodDeclaration):
+            continue
         function_data = {
-            "name": node.name,
-            "param": [f"{p.type.name} {p.name}" for p in node.parameters],
+            "classname": current_class_name,
+            "methodname": node.name,
+            "parameters": [f"{p.type.name} {p.name}" for p in node.parameters],
             "calls": set()
         }
         if node.position:
@@ -133,5 +140,7 @@ all_code_data = parse_codebase(directory_path)
 for data in all_code_data:
     data["calls"] = [method.to_json() for method in data["calls"]]
 
+save_methods_to_json(unique_methods, '/home/dheena/Downloads/Intiliee/output/unique_methods.json')
 # Save the extracted data to a JSON file
 save_to_json(all_code_data, '/home/dheena/Downloads/Intiliee/output/output_code_data.json')
+
