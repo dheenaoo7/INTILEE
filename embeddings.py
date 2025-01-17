@@ -23,21 +23,41 @@ class JsonEmbeddingsProcessor:
 
     def _flatten_code_object(self, code_obj: Dict[str, Any]) -> str:
         """Convert code object to a detailed string representation."""
+        # Ensure code_obj is a dictionary
+        if not isinstance(code_obj, dict):
+            print(f"Expected dictionary, but got: {type(code_obj)}")
+            return ""
+
         flattened = f"Function: {code_obj.get('name', '')}\n"
+        
+        # Handle 'param' which is expected to be a list
         params = code_obj.get('param', [])
-        if params:
+        if isinstance(params, list):  # Ensure 'param' is a list
             flattened += "Parameters:\n" + "\n".join(f"- {p}" for p in params) + "\n"
+        else:
+            print(f"Unexpected 'param' value: {params}")
+        
+        # Handle 'calls' which is expected to be a list of dictionaries
         calls = code_obj.get('calls', [])
-        if calls:
-            flattened += "Function Calls:\n" + "\n".join(
-                f"- {c.get('name', '')}({', '.join(c.get('args', []))})" for c in calls
-            ) + "\n"
-        explanation = code_obj.get('explanation', '')
-        if explanation:
-            flattened += f"Explanation: {explanation}\n"
+        if isinstance(calls, list):  # Ensure 'calls' is a list
+            if calls:
+                flattened += "Function Calls:\n"
+                for call in calls:
+                    if isinstance(call, dict):  # Ensure call is a dictionary
+                        classname = call.get('classname', '')
+                        methodname = call.get('methodname', '')
+                        parameters = ", ".join(call.get('parameters', []))
+                        flattened += f"- {classname}.{methodname}({parameters})\n"
+                    else:
+                        print(f"Unexpected 'call' value: {call}")
+        else:
+            print(f"Unexpected 'calls' value: {calls}")
+        
+        # Handle 'code' which is expected to be a string
         code_snippet = code_obj.get('code', '')
         if code_snippet:
             flattened += f"Code:\n{code_snippet}\n"
+        
         return flattened
 
     def validate_json(self, file_path: str) -> bool:
@@ -45,22 +65,22 @@ class JsonEmbeddingsProcessor:
         try:
             with open(file_path, 'r') as f:
                 data = json.load(f)
-            return isinstance(data.get('functions', []), list)
-        except (json.JSONDecodeError, KeyError):
+            # Check if the loaded data is a list
+            return isinstance(data, list)
+        except json.JSONDecodeError:
             return False
 
     def process_json_file(self, file_path: str, batch_size: int = 50) -> List[Dict[str, Any]]:
         """Process JSON file in batches and generate embeddings."""
         if not self.validate_json(file_path):
-            raise ValueError("Invalid JSON structure. Ensure 'functions' key contains a list.")
+            raise ValueError("Invalid JSON structure. Expected a list of function objects.")
 
         embeddings_data = []
         with open(file_path, 'r') as f:
             data = json.load(f)
-        functions = data.get('functions', [])
 
-        for i in tqdm(range(0, len(functions), batch_size), desc="Processing batches"):
-            batch = functions[i:i + batch_size]
+        for i in tqdm(range(0, len(data), batch_size), desc="Processing batches"):
+            batch = data[i:i + batch_size]
             batch_texts = [self._flatten_code_object(obj) for obj in batch]
             try:
                 response = self.client.embeddings.create(
@@ -69,15 +89,16 @@ class JsonEmbeddingsProcessor:
                 )
                 for j, obj in enumerate(batch):
                     embeddings_data.append({
-                        'name': obj['name'],
+                        'name': obj.get('name', ''),
                         'embedding': response.data[j].embedding,
                         'metadata': obj
                     })
             except Exception as e:
                 print(f"Error processing batch {i // batch_size}: {e}")
                 continue
-        return embeddings_data
 
+        return embeddings_data
+    
     def save_embeddings(self, embeddings_data: List[Dict[str, Any]], save_path: str):
         """Save embeddings and metadata to a file."""
         with open(save_path, 'wb') as f:
@@ -131,9 +152,15 @@ embeddings_data = []
 def load_embeddings():
     global embeddings_data
     try:
-        embeddings_data = processor.load_embeddings("code_embeddings.pkl")
+        # Attempt to load the embeddings from the file
+        if os.path.exists("code_embeddings.pkl"):
+            embeddings_data = processor.load_embeddings("code_embeddings.pkl")
+        else:
+            embeddings_data = []  # Initialize as empty list if no embeddings exist
+            print("No existing embeddings found, starting with an empty list.")
     except Exception as e:
         print(f"Error loading embeddings: {e}")
+
 
 class QueryRequest(BaseModel):
     query: str
@@ -145,3 +172,33 @@ def find_similar_code_endpoint(request: QueryRequest):
         raise HTTPException(status_code=500, detail="Embeddings data not loaded.")
     results = processor.find_similar_code(request.query, embeddings_data, request.top_k)
     return results
+
+@app.get("/update")
+async def reprocess_and_update_embeddings():
+    """This endpoint reprocesses the local JSON file and updates the embeddings."""
+    
+    # Dynamically construct the file paths based on the current directory
+    current_directory = os.getcwd()  # Get the current working directory
+    input_file_path = os.path.join(current_directory, "output/output_code_data.json")  # Assuming the file is named 'code.son'
+    output_file_path = os.path.join(current_directory, "code_embeddings.pkl")  # Embeddings will be saved as 'code_embeddings.pkl'
+
+    try:
+        # Process the JSON file and generate embeddings
+        new_embeddings = processor.process_json_file(input_file_path)
+
+        # Load existing embeddings from the file if it exists
+        if os.path.exists(output_file_path):
+            embeddings_data = processor.load_embeddings(output_file_path)
+        else:
+            embeddings_data = []  # Initialize as empty list if no embeddings exist
+
+        # Add the new embeddings to the existing data
+        embeddings_data.extend(new_embeddings)
+
+        # Save the updated embeddings to the output file
+        processor.save_embeddings(embeddings_data, output_file_path)
+
+        return {"detail": "Embeddings reprocessed and updated successfully"}
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing the JSON file: {e}")
