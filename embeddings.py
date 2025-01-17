@@ -28,7 +28,10 @@ class JsonEmbeddingsProcessor:
             print(f"Expected dictionary, but got: {type(code_obj)}")
             return ""
 
-        flattened = f"Function: {code_obj.get('name', '')}\n"
+        class_name = code_obj.get('classname', '')
+        method_name = code_obj.get('methodname', '')
+        flattened = f"Class: {class_name}\nMethod: {method_name}\n"
+        
         
         # Handle 'param' which is expected to be a list
         params = code_obj.get('param', [])
@@ -136,13 +139,19 @@ class JsonEmbeddingsProcessor:
         sorted_results = sorted(similarities, key=lambda x: x['similarity_score'], reverse=True)
         results_with_explanation = []
         for result in sorted_results[:top_k]:
+            metadata = result['metadata']
+            classname = metadata.get('classname', '')
+            methodname = metadata.get('methodname', '')
+            calls = metadata.get('calls', '')
             results_with_explanation.append({
-                'name': result['name'],
+                 'classname': classname,
+                 'methodname': methodname,
+                 'calls':calls,
                 'similarity_score': result['similarity_score'],
                 'code_snippet': json.dumps(result['metadata'], indent=2)
             })
         return results_with_explanation
-
+    
 # FastAPI setup
 app = FastAPI()
 processor = JsonEmbeddingsProcessor(api_key=api_key)
