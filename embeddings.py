@@ -13,8 +13,6 @@ from typing import List, Dict, Any
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 
-print(api_key)
-
 if not api_key:
     raise ValueError("OPENAI_API_KEY not found in environment variables. Please check your .env file.")
 
@@ -191,46 +189,6 @@ class JsonEmbeddingsProcessor:
         with open(load_path, 'rb') as f:
             return pickle.load(f)
 
-    def find_similar_code(self, query: str, embeddings_data: List[Dict[str, Any]], top_k: int = 2) -> List[Dict[str, Any]]:
-        """Find most similar code objects to a query."""
-        try:
-            query_response = self.client.embeddings.create(
-                model=self.model,
-                input=query
-            )
-        except Exception as e:
-            print(f"Error generating query embedding: {e}")
-            return []
-
-        query_embedding = np.array(query_response.data[0].embedding)
-        similarities = []
-        for item in embeddings_data:
-            embedding = np.array(item['embedding'])
-            similarity = np.dot(query_embedding, embedding) / (
-                np.linalg.norm(query_embedding) * np.linalg.norm(embedding)
-            )
-            similarities.append({
-                'name': item['name'],
-                'metadata': item['metadata'],
-                'similarity_score': float(similarity)
-            })
-
-        sorted_results = sorted(similarities, key=lambda x: x['similarity_score'], reverse=True)
-        results_with_explanation = []
-        for result in sorted_results[:top_k]:
-            metadata = result['metadata']
-            classname = metadata.get('classname', '')
-            methodname = metadata.get('methodname', '')
-            calls = metadata.get('calls', '')
-            results_with_explanation.append({
-                 'classname': classname,
-                 'methodname': methodname,
-                 'calls':calls,
-                'similarity_score': result['similarity_score'],
-                'code_snippet': json.dumps(result['metadata'], indent=2)
-            })
-        return results_with_explanation
-    
 # FastAPI setup
 app = FastAPI()
 processor = JsonEmbeddingsProcessor(api_key=api_key)
