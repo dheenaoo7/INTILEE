@@ -22,86 +22,100 @@ class JsonEmbeddingsProcessor:
         self.model = model
         self.method_index = {}
 
-    def _create_method_index(self, embeddings_data: List[Dict[str, Any]]):
-        """Create an index from embeddings data for faster lookup"""
+    def _create_method_index(self, data: List[Dict[str, Any]], is_embedding_data: bool = False):
+        """Create an index from either raw JSON data or embeddings data."""
         self.method_index.clear()
-        for item in embeddings_data:
-            metadata = item.get('metadata', {})
-            # Make case insensitive by converting to lowercase
-            key = f"{metadata.get('classname', '').lower()}_{metadata.get('methodname', '').lower()}"
-            self.method_index[key] = metadata
+        for item in data:
+            if is_embedding_data:
+                # For embedding data, metadata contains the original object
+                item = item.get('metadata', {})
+            
+            # Skip items without required fields
+            if not item.get('classname') or not item.get('methodname'):
+                continue
+                
+            key = f"{item.get('classname', '').lower()}_{item.get('methodname', '').lower()}"
+            self.method_index[key] = item
 
     def find_similar_code(self, query: str, embeddings_data: List[Dict[str, Any]], top_k: int = 2) -> List[Dict[str, Any]]:
-        """Find most similar code objects to a query and validate inner method calls."""
-        # Create index once for this search
-        self._create_method_index(embeddings_data)
+        """Find similar code objects and validate their calls."""
+        self._create_method_index(embeddings_data, is_embedding_data=True)
 
         try:
             query_response = self.client.embeddings.create(
                 model=self.model,
                 input=query
             )
+            query_embedding = np.array(query_response.data[0].embedding)
+            similarities = []
+            
+            # Track seen methods to avoid duplicates
+            seen_methods = set()
+            
+            for item in embeddings_data:
+                embedding = np.array(item['embedding'])
+                metadata = item['metadata']
+                method_key = f"{metadata.get('classname', '')}.{metadata.get('methodname', '')}"
+                
+                # Skip if we've already seen this method
+                if method_key in seen_methods:
+                    continue
+                    
+                seen_methods.add(method_key)
+                similarity = np.dot(query_embedding, embedding) / (
+                    np.linalg.norm(query_embedding) * np.linalg.norm(embedding)
+                )
+                similarities.append({
+                    'metadata': metadata,
+                    'similarity_score': float(similarity)
+                })
+
+            sorted_results = sorted(similarities, key=lambda x: x['similarity_score'], reverse=True)
+            results_with_explanation = []
+            
+            for result in sorted_results[:top_k]:   
+                metadata = result['metadata']
+                classname = metadata.get('classname', '')
+                methodname = metadata.get('methodname', '')
+                calls = metadata.get('calls', [])
+                
+                validated_calls = []
+                for call in calls:
+                    call_classname = call.get('classname', '')
+                    if(call_classname=="this"):
+                          call_classname=classname
+                    call_methodname = call.get('methodname', '')
+                    
+                
+                    method_key = f"{call_classname.lower()}_{call_methodname.lower()}"
+                    matching_method = self.method_index.get(method_key)
+                        # Add debug print to verify matches
+                    print(f"Found internal method: {call_classname}.{call_methodname}")
+                    validated_calls.append({
+                            'classname': call_classname,
+                            'methodname': call_methodname,
+                            'parameters': call.get('parameters', []),
+                            'is_internal_method': True,
+                            'code_snippet': matching_method.get('code', '')
+                        })
+                   
+                results_with_explanation.append({
+                    'classname': classname,
+                    'methodname': methodname,
+                    'calls': validated_calls,
+                    'similarity_score': result['similarity_score'],
+                    'code_snippet': metadata.get('code', '')
+                })
+            
+            return results_with_explanation
         except Exception as e:
             print(f"Error generating query embedding: {e}")
             return []
 
-        query_embedding = np.array(query_response.data[0].embedding)
-        similarities = []
-        
-        for item in embeddings_data:
-            embedding = np.array(item['embedding'])
-            similarity = np.dot(query_embedding, embedding) / (
-                np.linalg.norm(query_embedding) * np.linalg.norm(embedding)
-            )
-            similarities.append({
-                'metadata': item['metadata'],
-                'similarity_score': float(similarity)
-            })
-
-        sorted_results = sorted(similarities, key=lambda x: x['similarity_score'], reverse=True)
-        results_with_explanation = []
-        
-        for result in sorted_results[:top_k]:
-            metadata = result['metadata']
-            classname = metadata.get('classname', '')
-            methodname = metadata.get('methodname', '')
-            calls = metadata.get('calls', [])
-            
-            validated_calls = []
-            for call in calls:
-                call_classname = call.get('classname', '')
-                if(call_classname=="this"):
-                      call_classname=classname
-                call_methodname = call.get('methodname', '')
-                
-            
-                method_key = f"{call_classname.lower()}_{call_methodname.lower()}"
-                matching_method = self.method_index.get(method_key)
-                
-                if matching_method:
-                    # Add debug print to verify matches
-                    print(f"Found internal method: {call_classname}.{call_methodname}")
-                    validated_calls.append({
-                        'classname': call_classname,
-                        'methodname': call_methodname,
-                        'parameters': call.get('parameters', []),
-                        'is_internal_method': True,
-                        'code_snippet': matching_method.get('code', '')
-                    })
-               
-            results_with_explanation.append({
-                'classname': classname,
-                'methodname': methodname,
-                'calls': validated_calls,
-                'similarity_score': result['similarity_score'],
-                'code_snippet': metadata.get('code', '')
-            })
-        
-        return results_with_explanation
-
     def _flatten_code_object(self, code_obj: Dict[str, Any]) -> str:
         """Convert code object to a detailed string representation."""
         # Ensure code_obj is a dictionary
+        
         if not isinstance(code_obj, dict):
             print(f"Expected dictionary, but got: {type(code_obj)}")
             return ""
@@ -151,6 +165,30 @@ class JsonEmbeddingsProcessor:
         except json.JSONDecodeError:
             return False
 
+    def _validate_calls(self, code_obj: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate and filter internal method calls before embedding."""
+        if not isinstance(code_obj, dict):
+            return code_obj
+
+        classname = code_obj.get('classname', '')
+        calls = code_obj.get('calls', [])
+        validated_calls = []
+
+        for call in calls:
+            call_classname = call.get('classname', '')
+            if call_classname == "this":
+                call_classname = classname
+            call_methodname = call.get('methodname', '')
+            
+            method_key = f"{call_classname.lower()}_{call_methodname.lower()}"
+            if self.method_index.get(method_key):
+                validated_calls.append(call)
+
+        # Create a new object with validated calls
+        validated_obj = code_obj.copy()
+        validated_obj['calls'] = validated_calls
+        return validated_obj
+
     def process_json_file(self, file_path: str, batch_size: int = 50) -> List[Dict[str, Any]]:
         """Process JSON file in batches and generate embeddings."""
         if not self.validate_json(file_path):
@@ -160,23 +198,42 @@ class JsonEmbeddingsProcessor:
         with open(file_path, 'r') as f:
             data = json.load(f)
 
-        for i in tqdm(range(0, len(data), batch_size), desc="Processing batches"):
-            batch = data[i:i + batch_size]
-            batch_texts = [self._flatten_code_object(obj) for obj in batch]
+        # Create method index from raw data
+        self._create_method_index(data)
+        
+        # Filter out invalid items before processing
+        valid_data = [
+            item for item in data 
+            if item.get('classname') and item.get('methodname') and item.get('code')
+        ]
+        
+        print(f"Processing {len(valid_data)} valid items out of {len(data)} total items")
+
+        for i in tqdm(range(0, len(valid_data), batch_size), desc="Processing batches"):
+            batch = valid_data[i:i + batch_size]
+            # Validate calls before flattening
+            validated_batch = [self._validate_calls(obj) for obj in batch]
+            batch_texts = [self._flatten_code_object(obj) for obj in validated_batch]
+            
+            if not batch_texts:
+                continue
+                
             try:
                 response = self.client.embeddings.create(
                     model=self.model,
                     input=batch_texts
                 )
-                for j, obj in enumerate(batch):
+                for j, obj in enumerate(validated_batch):
                     embeddings_data.append({
                         'embedding': response.data[j].embedding,
-                        'metadata': obj
+                        'metadata': obj,
+                        'text': batch_texts[j]  # Save the flattened text for reference
                     })
             except Exception as e:
                 print(f"Error processing batch {i // batch_size}: {e}")
                 continue
 
+        print(f"Successfully processed {len(embeddings_data)} embeddings")
         return embeddings_data
     
     def save_embeddings(self, embeddings_data: List[Dict[str, Any]], save_path: str):
