@@ -5,9 +5,11 @@ from tqdm import tqdm
 import numpy as np
 from openai import OpenAI
 from typing import List, Dict, Any
+from dotenv import load_dotenv
+import os
 
 # Load environment variables
-
+load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 
 if not api_key:
