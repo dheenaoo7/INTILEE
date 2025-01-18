@@ -13,6 +13,8 @@ from typing import List, Dict, Any
 load_dotenv()
 api_key = os.getenv("OPENAI_API_KEY")
 
+print(api_key)
+
 if not api_key:
     raise ValueError("OPENAI_API_KEY not found in environment variables. Please check your .env file.")
 
@@ -20,6 +22,84 @@ class JsonEmbeddingsProcessor:
     def __init__(self, api_key: str, model: str = "text-embedding-ada-002"):
         self.client = OpenAI(api_key=api_key)
         self.model = model
+        self.method_index = {}
+
+    def _create_method_index(self, embeddings_data: List[Dict[str, Any]]):
+        """Create an index from embeddings data for faster lookup"""
+        self.method_index.clear()
+        for item in embeddings_data:
+            metadata = item.get('metadata', {})
+            # Make case insensitive by converting to lowercase
+            key = f"{metadata.get('classname', '').lower()}_{metadata.get('methodname', '').lower()}"
+            self.method_index[key] = metadata
+
+    def find_similar_code(self, query: str, embeddings_data: List[Dict[str, Any]], top_k: int = 2) -> List[Dict[str, Any]]:
+        """Find most similar code objects to a query and validate inner method calls."""
+        # Create index once for this search
+        self._create_method_index(embeddings_data)
+
+        try:
+            query_response = self.client.embeddings.create(
+                model=self.model,
+                input=query
+            )
+        except Exception as e:
+            print(f"Error generating query embedding: {e}")
+            return []
+
+        query_embedding = np.array(query_response.data[0].embedding)
+        similarities = []
+        
+        for item in embeddings_data:
+            embedding = np.array(item['embedding'])
+            similarity = np.dot(query_embedding, embedding) / (
+                np.linalg.norm(query_embedding) * np.linalg.norm(embedding)
+            )
+            similarities.append({
+                'metadata': item['metadata'],
+                'similarity_score': float(similarity)
+            })
+
+        sorted_results = sorted(similarities, key=lambda x: x['similarity_score'], reverse=True)
+        results_with_explanation = []
+        
+        for result in sorted_results[:top_k]:
+            metadata = result['metadata']
+            classname = metadata.get('classname', '')
+            methodname = metadata.get('methodname', '')
+            calls = metadata.get('calls', [])
+            
+            validated_calls = []
+            for call in calls:
+                call_classname = call.get('classname', '')
+                if(call_classname=="this"):
+                      call_classname=classname
+                call_methodname = call.get('methodname', '')
+                
+            
+                method_key = f"{call_classname.lower()}_{call_methodname.lower()}"
+                matching_method = self.method_index.get(method_key)
+                
+                if matching_method:
+                    # Add debug print to verify matches
+                    print(f"Found internal method: {call_classname}.{call_methodname}")
+                    validated_calls.append({
+                        'classname': call_classname,
+                        'methodname': call_methodname,
+                        'parameters': call.get('parameters', []),
+                        'is_internal_method': True,
+                        'code_snippet': matching_method.get('code', '')
+                    })
+               
+            results_with_explanation.append({
+                'classname': classname,
+                'methodname': methodname,
+                'calls': validated_calls,
+                'similarity_score': result['similarity_score'],
+                'code_snippet': metadata.get('code', '')
+            })
+        
+        return results_with_explanation
 
     def _flatten_code_object(self, code_obj: Dict[str, Any]) -> str:
         """Convert code object to a detailed string representation."""
@@ -92,7 +172,6 @@ class JsonEmbeddingsProcessor:
                 )
                 for j, obj in enumerate(batch):
                     embeddings_data.append({
-                        'name': obj.get('name', ''),
                         'embedding': response.data[j].embedding,
                         'metadata': obj
                     })
