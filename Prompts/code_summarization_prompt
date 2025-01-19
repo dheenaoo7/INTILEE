@@ -1,0 +1,9 @@
+Extract the lines form this Code that are required to answer this Query provide further needed
+If you think more code is required for the response generation then Extract the required method calls with their class name  and args from this code
+If no code is required then leave this empty
+No need of verbose
+
+Query : provide a sample curl to add or update ticket webhook
+Code :
+Extracted Code :
+Required Methods :

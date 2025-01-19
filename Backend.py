@@ -3,7 +3,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from typing import Any, Dict
-from embeddings import JsonEmbeddingsProcessor
+from json_embeddings import JsonEmbeddingsProcessor
+import text_embeddings
 import PromptMaker
 import requests
 
@@ -12,6 +13,7 @@ api_key = os.getenv("OPENAI_API_KEY")
 
 app = FastAPI()
 processor = JsonEmbeddingsProcessor(api_key=api_key)
+text_embeddings_processor = text_embeddings.EmbeddingIndexer()
 embeddings_data = []    
 user_selection = {}
 UPLOAD_DIR = os.path.join(os.getcwd(), "Documents")
@@ -26,6 +28,7 @@ def load_embeddings():
         else:
             embeddings_data = []  # Initialize as empty list if no embeddings exist
             print("No existing embeddings found, starting with an empty list.")
+        text_embeddings_processor.load_index("index.faiss", "metadata.pkl")    
     except Exception as e:
         print(f"Error loading embeddings: {e}")
 
@@ -47,24 +50,15 @@ async def reprocess_and_update_embeddings():
     
     # Dynamically construct the file paths based on the current directory
     current_directory = os.getcwd()  # Get the current working directory
-    input_file_path = os    .path.join(current_directory, "output/output_code_data.json")  # Assuming the file is named 'code.son'
+    input_file_path = os.path.join(current_directory, "output/output_code_data.json")  # Assuming the file is named 'code.son'
     output_file_path = os.path.join(current_directory, "code_embeddings.pkl")  # Embeddings will be saved as 'code_embeddings.pkl'
 
     try:
         # Process the JSON file and generate embeddings
-        new_embeddings = processor.process_json_file(input_file_path)
-
-        # Load existing embeddings from the file if it exists
-        if os.path.exists(output_file_path):
-            embeddings_data = processor.load_embeddings(output_file_path)
-        else:
-            embeddings_data = []  # Initialize as empty list if no embeddings exist
-
-        # Add the new embeddings to the existing data
-        embeddings_data.extend(new_embeddings)
-
+        code_embeddings = processor.process_json_file(input_file_path)
+        
         # Save the updated embeddings to the output file
-        processor.save_embeddings(embeddings_data, output_file_path)
+        processor.save_embeddings(code_embeddings, output_file_path)
 
         return {"detail": "Embeddings reprocessed and updated successfully"}
     
@@ -72,13 +66,17 @@ async def reprocess_and_update_embeddings():
         raise HTTPException(status_code=500, detail=f"Error processing the JSON file: {e}")
     
 @app.post("/getAnswer")
-async def getAnswer(query:str):
-    reposne_index = 1
-    callIndex = 1
-    results = processor.find_similar_code(query, embeddings_data, reposne_index) 
-    parent_code = results[reposne_index - 1]['code_snippet']
-    child_codes = [call['code_snippet'] for call in results[callIndex - 1]['calls']]
-    answer = PromptMaker.get_code_assistant_response(query,parent_code, child_codes)
+async def getAnswer(query:str, selected_type :str):
+    if selected_type == "KapCode":
+        reposne_index = 1
+        callIndex = 1
+        results = processor.find_similar_code(query, embeddings_data, reposne_index) 
+        parent_code = results[reposne_index - 1]['code_snippet']
+        child_codes = [call['code_snippet'] for call in results[callIndex - 1]['calls']]
+        answer = PromptMaker.handle_user_query(selected_type, query, parent_code, child_codes)
+    elif selected_type == "KapDoc":
+        results = text_embeddings_processor.query(query)
+        answer = PromptMaker.handle_user_query(selected_type, query= query, results=results)   
     return answer.content
 
 
@@ -125,7 +123,7 @@ async def chatbot_endpoint(request: Request) -> Dict[str, Any]:
                     file_path = os.path.join(UPLOAD_DIR, file_name)
                     with open(file_path, 'wb') as f:
                         f.write(file_content)
-                    
+                    text_embeddings_processor.embed_text_from_file(file_path)
                     return JSONResponse(content={
                         "text": f"File {file_name} has been saved successfully!"
                     })

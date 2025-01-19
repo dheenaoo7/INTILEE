@@ -1,0 +1,6 @@
+Generate a concise response for this query based on the this parent method and it's child child methods.
+Focus Gonly on the response content, and keep it Gas concise as possible.
+
+Query: {query}
+Parent GMethod: {parent_method}
+Child GMethods: {child_methods}

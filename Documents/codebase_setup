@@ -1,0 +1,70 @@
+### Codebase Setup Process for New Onboarded Employees
+
+#### 1. Requesting Access
+- Instruct the user to email their reporting manager to request access to Jira and Bitbucket.
+
+#### 2. Installing Required Tools
+Guide the user to install the following tools:
+- Git
+- MySQL
+- Tomcat
+- Maven
+- Kafka
+- Redis
+
+#### 3. Accessing Database Dump and Server Configuration
+- Provide the user with the following drive link to download the database dump file and server configuration:
+  [DB Dump and Server Config](https://drive.google.com/file/d/197xQoTdDbwS_l7uyGaYJ4CIUMnYQ5iu5/view)
+
+#### 4. Adding SSH Key to Bitbucket
+- Give the user instructions on how to generate and add their SSH key to Bitbucket.
+
+#### 5. Setting Up `adjetter_main` Repository
+This repository is the backbone of the Kapture codebase. Follow these steps:
+
+1. **Database Configuration**
+   - Update the database name and password in `resources/properties/DB.properties`.
+
+2. **Log Directory Configuration**
+   - Update the log directory path in `resources/properties/log4j.properties`.
+
+3. **Increase Memory Size**
+   - Update `build.xml` to set `memoryInitialSize` and `memoryMaximumSize` as required (recommended values: 2048, 4096).
+
+4. **Build the Project**
+   - Assist the user in running an `ant clean build` command.
+
+5. **Update Tomcat Configuration**
+   - Replace the default `server.xml` file in Tomcat with the one provided in the drive link.
+   - Ask the user to update placeholder values in the `server.xml` file as shown below:
+     
+     **User View:**
+     ```xml
+     <Context docBase="/home/dheena/workspace/adjetter_main/webapp/ROOT"
+             path="/" reloadable="true">
+         <Resource auth="Container" driverClassName="com.mysql.jdbc.Driver" 
+                   maxActive="{Connection count}" maxIdle="{Idle Connection count}"
+                   name="jdbc/{database name}" password="{password}" 
+                   type="javax.sql.DataSource"
+                   url="jdbc:mysql://localhost:3306/{database name}?verifyServerCertificate=false&amp;autoReconnect=true&amp;useSSL=false&amp;maxReconnects=15&amp;allowPublicKeyRetrieval=true"
+                   username="{user name}"/>
+     </Context>
+     <Context docBase="{photos path}" path="/photos" reloadable="true" />
+     ```
+   - Ensure the user replaces placeholder values (`{Connection count}`, `{Idle Connection count}`, `{database name}`, `{password}`, `{username}`, `{photos path}`) with the actual values.
+
+6. **Configure IntelliJ Run/Debug Settings**
+   - Guide the user to add a Tomcat server in the Run/Debug configurations in IntelliJ.
+   - Set the `CATALINA_BASE` path variable to the Tomcat base directory.
+
+#### 6. Setting Up Microservices
+1. **Update Maven Configuration**
+   - Direct the user to replace their `settings.xml` file in Maven with the one provided in the drive link.
+
+2. **Clone Required Repositories**
+   - Assist the user in cloning the necessary microservice repositories.
+   - Ensure the user updates the database name, password, and other configurations in the cloned repositories.
+
+---
+
+By following these steps, the new onboarded employee should be able to set up the codebase and development environment successfully.

@@ -245,3 +245,32 @@ class JsonEmbeddingsProcessor:
         with open(load_path, 'rb') as f:
             return pickle.load(f)
 
+    def create_text_embeddings_and_index(self, texts: List[str]) -> Dict[str, Any]:
+        """
+        Creates embeddings for the provided texts and indexes them in a dictionary.
+        """
+        index = {}
+        batch_size = 16
+        embeddings_data = []
+
+        for i in range(0, len(texts), batch_size):
+            batch_texts = texts[i : i + batch_size]
+            try:
+                response = self.client.embeddings.create(
+                    model=self.model,
+                    input=batch_texts
+                )
+                for j, text in enumerate(batch_texts):
+                    embedding_vector = response.data[j].embedding
+                    embeddings_data.append({
+                        'text': text,
+                        'embedding': embedding_vector
+                    })
+                    index[text] = embedding_vector
+
+            except Exception as e:
+                print(f"Error processing batch {i // batch_size}: {e}")
+                continue
+
+        print(f"Indexed {len(embeddings_data)} texts.")
+        return index
