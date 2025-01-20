@@ -45,15 +45,23 @@ def find_similar_code_endpoint(request: QueryRequest):
     return results
 
 @app.get("/update")
-async def reprocess_and_update_embeddings():
-    """This endpoint reprocesses the local JSON file and updates the embeddings."""
-    
-    # Dynamically construct the file paths based on the current directory
-    current_directory = os.getcwd()  # Get the current working directory
-    input_file_path = os.path.join(current_directory, "output/output_code_data.json")  # Assuming the file is named 'code.son'
-    output_file_path = os.path.join(current_directory, "code_embeddings.pkl")  # Embeddings will be saved as 'code_embeddings.pkl'
-
+async def reprocess_and_update_embeddings(input_dir: str = None):
+    """
+    This endpoint reprocesses the local JSON file and updates the embeddings.
+    Accepts an optional input path; uses the default path if not provided.
+    """
     try:
+        # Dynamically construct the file paths
+        current_directory = os.getcwd()  # Get the current working directory
+        input_file_path=input_dir
+        output_file_path = os.path.join(
+            current_directory, "code_embeddings.pkl"
+        )  # Embeddings will be saved as 'code_embeddings.pkl'
+
+        # Check if the input file exists
+        if not os.path.exists(input_file_path):
+            raise FileNotFoundError(f"Input file not found at {input_file_path}")
+
         # Process the JSON file and generate embeddings
         code_embeddings = processor.process_json_file(input_file_path)
         
@@ -62,6 +70,8 @@ async def reprocess_and_update_embeddings():
 
         return {"detail": "Embeddings reprocessed and updated successfully"}
     
+    except FileNotFoundError as fnf_error:
+        raise HTTPException(status_code=404, detail=str(fnf_error))
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing the JSON file: {e}")
     

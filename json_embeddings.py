@@ -236,9 +236,18 @@ class JsonEmbeddingsProcessor:
         return embeddings_data
     
     def save_embeddings(self, embeddings_data: List[Dict[str, Any]], save_path: str):
-        """Save embeddings and metadata to a file."""
+        """Save embeddings and metadata to a file, extending existing data if the file exists."""
+        if os.path.exists(save_path):
+        # Load existing embeddings
+           with open(save_path, 'rb') as f:
+            existing_data = pickle.load(f)
+        # Append the new embeddings to the existing ones
+        existing_data.extend(embeddings_data)
+        embeddings_data = existing_data  # Update embeddings_data to include both old and new data
+    
+    # Save the combined embeddings back to the file
         with open(save_path, 'wb') as f:
-            pickle.dump(embeddings_data, f)
+         pickle.dump(embeddings_data, f)
 
     def load_embeddings(self, load_path: str) -> List[Dict[str, Any]]:
         """Load embeddings and metadata from a file."""

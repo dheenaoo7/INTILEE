@@ -109,13 +109,17 @@ def parse_java_file(file_path):
     return functions_data
 
 
-def parse_codebase(directory):
+def parse_codebase(directory, output_directory):
     """Parse an entire Java codebase to extract functions and classes."""
+    if not os.path.exists(output_directory):
+        os.makedirs(output_directory)
+
     all_files_data = []
     for root, dirs, files in os.walk(directory):
         for file in files:
             if file.endswith('.java'):
                 extract_unique_methods_from_ast(os.path.join(root, file))
+    
     for root, dirs, files in os.walk(directory):
         for file in files:
             if file.endswith('.java'):
@@ -124,7 +128,15 @@ def parse_codebase(directory):
                 file_data = parse_java_file(file_path)
                 all_files_data.extend(file_data)
 
-    return all_files_data
+    # Save the extracted data to a JSON file named after the directory
+    output_file = os.path.join(output_directory, f"{os.path.basename(directory)}_output_code_data.json")
+    for data in all_files_data:
+        data["calls"] = [method.to_json() for method in data["calls"]]
+
+    save_methods_to_json(unique_methods, os.path.join(output_directory, f"{os.path.basename(directory)}_unique_methods.json"))
+    save_to_json(all_files_data, output_file)
+
+    return output_file
 
 def save_to_json(data, output_path):
     """Save the extracted data to a JSON file."""
@@ -135,12 +147,19 @@ def save_to_json(data, output_path):
     except Exception as e:
         print(f"Error saving data to JSON: {e}")
 
-directory_path = '/home/dheena/workspace/microservices/ticket-configuration-microservice'
-all_code_data = parse_codebase(directory_path)
-for data in all_code_data:
-    data["calls"] = [method.to_json() for method in data["calls"]]
 
-save_methods_to_json(unique_methods, '/home/dheena/Downloads/Intiliee/output/unique_methods.json')
-# Save the extracted data to a JSON file
-save_to_json(all_code_data, '/home/dheena/Downloads/Intiliee/output/output_code_data.json')
 
+# directory_path = '/home/dheena/workspace/microservices/ticket-configuration-microservice'
+# output_directory = '/home/dheena/Downloads/Intiliee/output'
+# output_file_path = parse_codebase(directory_path, output_directory)
+
+
+
+# directory_path = '/home/dheena/workspace/microservices/ticket-configuration-microservice'
+# all_code_data = parse_codebase(directory_path)
+# for data in all_code_data:
+#     data["calls"] = [method.to_json() for method in data["calls"]]
+
+# save_methods_to_json(unique_methods, '/home/dheena/Downloads/Intiliee/output/unique_methods.json')
+# # Save the extracted data to a JSON file
+# save_to_json(all_code_data, '/home/dheena/Downloads/Intiliee/output/output_code_data.json')
