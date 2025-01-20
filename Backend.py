@@ -1,14 +1,19 @@
 import os
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import Any, Dict
 from json_embeddings import JsonEmbeddingsProcessor
 import text_embeddings
 import PromptMaker
-import requests
-
-
+from google.oauth2.service_account import Credentials
+from google_auth_oauthlib.flow import Flow
+from google.auth.transport.requests import Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from typing import Any, Dict
+import google_oauth
 api_key = os.getenv("OPENAI_API_KEY")
 
 app = FastAPI()
@@ -28,7 +33,8 @@ def load_embeddings():
         else:
             embeddings_data = []  # Initialize as empty list if no embeddings exist
             print("No existing embeddings found, starting with an empty list.")
-        text_embeddings_processor.load_index("index.faiss", "metadata.pkl")    
+        if(os.path.exists("index.faiss") and os.path.exists("metadata.pkl")):
+            text_embeddings_processor.load_index("index.faiss", "metadata.pkl")    
     except Exception as e:
         print(f"Error loading embeddings: {e}")
 
@@ -66,87 +72,82 @@ async def reprocess_and_update_embeddings():
         raise HTTPException(status_code=500, detail=f"Error processing the JSON file: {e}")
     
 @app.post("/getAnswer")
-async def getAnswer(query:str, selected_type :str):
+async def getAnswer(query:str, selected_type :str = "KapCode"):
+    answer = "Internal Server Error"
     if selected_type == "KapCode":
         reposne_index = 1
         callIndex = 1
         results = processor.find_similar_code(query, embeddings_data, reposne_index) 
         parent_code = results[reposne_index - 1]['code_snippet']
         child_codes = [call['code_snippet'] for call in results[callIndex - 1]['calls']]
-        answer = PromptMaker.handle_user_query(selected_type, query, parent_code, child_codes)
+        answer = PromptMaker.handle_user_query(selected_type, query, parent_method=parent_code, child_methods=child_codes)
     elif selected_type == "KapDoc":
         results = text_embeddings_processor.query(query)
-        answer = PromptMaker.handle_user_query(selected_type, query= query, results=results)   
-    return answer.content
+        results = text_embeddings_processor.get_texts_by_metadata([doc['metadata'] for doc in results])
+        answer = PromptMaker.handle_user_query(selected_type, query= query, documents = results, parent_method=None, child_methods=None)   
+    return answer
 
-
-
-@app.post("/chatbot")
+@app.post("/chatbot", response_model=None)  # Disable auto-response model generation
 async def chatbot_endpoint(request: Request) -> Dict[str, Any]:
     """
     Endpoint to handle messages from Google Chat.
     """
     try:
         request_json = await request.json()
-        
+
         # Handle different types of Google Chat events
         event_type = request_json.get('type', '')
-
-        print(request_json.get('message', {}))
+        sender_name = request_json.get('message', {}).get('sender', {}).get('displayName', 'User')
+        
+        print(request_json)
 
         if event_type == 'ADDED_TO_SPACE':
             return JSONResponse(content={
                 "text": create_welcome_message(),
-                "cards": [create_selection_card()]
+                "cards": [create_selection_card(sender_name)]
             })
         # Handle REMOVED_FROM_SPACE event
         elif event_type == 'REMOVED_FROM_SPACE':
             return JSONResponse(content={ "text": "Thank you for using kapQuery! Goodbye! 👋"})
-        
+
         action = request_json.get('action', {}).get('actionMethodName', '')
         if action:
             return await handle_user_action(request_json)
-        
+
         # Handle attachments
         if 'attachment' in request_json.get('message', {}):
             attachments = request_json['message']['attachment']
             for attachment in attachments:
-                file_url = attachment.get('downloadUri')
+                resource_name = attachment.get('attachmentDataRef').get('resourceName')
                 file_name = attachment.get('contentName')
                 print("hii")
                 # Only handle .txt files
-                if file_name.endswith('.txt') and file_url:
-                    # Fetch the file content from the URL
-                    file_content = await download_file(file_url)
-                    
-                    # Save the file locally
+                if file_name.endswith('.txt') and resource_name:
+                    # Fetch and Save the file content from the URL
                     file_path = os.path.join(UPLOAD_DIR, file_name)
-                    with open(file_path, 'wb') as f:
-                        f.write(file_content)
-                    text_embeddings_processor.embed_text_from_file(file_path)
+                    google_oauth.download_and_save_file(resource_name, file_path)                  
+                    text_embeddings_processor.embed_text_from_file(file_path = file_path)
                     return JSONResponse(content={
-                        "text": f"File {file_name} has been saved successfully!"
-                    })
-
+                            "text": f"File {file_name} has been saved successfully!"
+                            })      
         # Handle regular messages (text messages)
         if 'message' in request_json:
             message_text = request_json.get('message', {}).get('text', '')
-            sender_name = request_json.get('message', {}).get('sender', {}).get('displayName', 'User')
 
             # Check if the message is "/stop"
-            if message_text.strip().lower() == "/stop":
+            if message_text.strip().lower() == "/stop" or message_text.strip().lower() == "/start":
                 user_selection[sender_name] = None
                 return JSONResponse(content={
                     "text": "Selection has been reset. Please choose one of the following options: KapDoc or KapCode.",
-                    "cards": [create_selection_card()]
+                    "cards": [create_selection_card(sender_name)]
                 })
             if(message_text==''):
                 return  JSONResponse(content={
-                "text": "Please Send a Text"
-            })
+                    "text": "Please Send a Text"
+                })
 
             # Handle other messages
-            response = await getAnswer(message_text)
+            response = await getAnswer(message_text, user_selection.get(sender_name, 'KapCode'))
             return JSONResponse(content={
                 "text": response
             })
@@ -155,18 +156,8 @@ async def chatbot_endpoint(request: Request) -> Dict[str, Any]:
         print(f"Error processing request: {str(e)}")
         return JSONResponse(
             content={"text": "An error occurred while processing your request."},
-            status_code=500
+            status_code = 200
         )
-
-
-async def download_file(file_url: str) -> bytes:
-    """
-    Downloads the file from the provided URL.
-    """
-    response = requests.get(file_url)
-    response.raise_for_status()  # Ensure we handle any errors
-    return response.content
-
 
 def create_welcome_message() -> str:
     """Creates a formatted welcome message for new users"""
@@ -179,7 +170,7 @@ def create_welcome_message() -> str:
     )
 
 
-def create_selection_card() -> Dict[str, Any]:
+def create_selection_card(username) -> Dict[str, Any]:
     """Creates an interactive card with KapDoc and KapCode options"""
     return {
         "header": {
@@ -196,7 +187,11 @@ def create_selection_card() -> Dict[str, Any]:
                                     "text": "KapDoc",
                                     "onClick": {
                                         "action": {
-                                            "actionMethodName": "selectKapDoc"
+                                            "actionMethodName": "selectKapDoc",
+                                            "parameters": [{
+                                                "key": "actionUsername",
+                                                "value": username
+                                                }]
                                         }
                                     }
                                 }
@@ -206,8 +201,13 @@ def create_selection_card() -> Dict[str, Any]:
                                     "text": "KapCode",
                                     "onClick": {
                                         "action": {
-                                            "actionMethodName": "selectKapCode"
+                                            "actionMethodName": "selectKapCode",
+                                            "parameters": [{
+                                                "key": "actionUsername",
+                                                "value": username
+                                                }]
                                         }
+                                        
                                     }
                                 }
                             },
@@ -222,7 +222,7 @@ async def handle_user_action(request_json: Dict[str, Any]) -> JSONResponse:
     """Handles user actions like selecting KapDoc or KapCode."""
     try:
         action = request_json.get('action', {}).get('actionMethodName', '')
-        user_name = request_json.get('message', {}).get('sender', {}).get('displayName', 'User')
+        user_name = request_json.get('action', {}).get('parameters', [{}])[0].get('value', 'User')
 
         # Determine which button was clicked and save the selection
         if action == 'selectKapDoc':
